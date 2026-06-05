@@ -2,6 +2,7 @@ import dotenv from 'dotenv'
 import { Router } from 'express'
 import Groq from 'groq-sdk'
 import { Resend } from 'resend'
+import Profile from '../models/Profile.js'
 dotenv.config()
 
 
@@ -17,9 +18,19 @@ const getGroq = () => {
   return _groq
 }
 
+const resolveProfile = async (profileOrId) => {
+  if (!profileOrId) return null
+  if (profileOrId.firstName) return profileOrId
+
+  const id = profileOrId._id || profileOrId.id || profileOrId
+  const doc = await Profile.findById(id).lean()
+    ?? await Profile.findOne({ id }).lean()
+  return doc
+}
 
 
-const toEmail = process.env.DEMO_EMAIL || customer.email  // override for demo
+const DEV_EMAIL = process.env.DEMO_EMAIL || 'project.test001.01@gmail.com'
+
 let _resend
 const getResend = () => {
   if (!_resend) {
@@ -264,8 +275,13 @@ function buildEmailHTML({ matchName, matchDesignation, matchCompany, matchCity, 
 }
 
 router.post('/score-match', async (req, res) => {
-  const { customer, match } = req.body
-  if (!customer || !match) return res.status(400).json({ error: 'customer and match required' })
+  const raw = req.body
+  const [customer, match] = await Promise.all([
+    resolveProfile(raw.customer),
+    resolveProfile(raw.match),
+  ])
+  if (!customer || !match)
+    return res.status(400).json({ error: 'Could not resolve customer or match profile' })
 
   const { total, breakdown } = computeMatchScore(customer, match)
   const label = scoreLabel(total)
@@ -296,8 +312,13 @@ Breakdown: ${breakdownSummary(breakdown)}`
 })
 
 router.post('/generate-intro', async (req, res) => {
-  const { customer, match } = req.body
-  if (!customer || !match) return res.status(400).json({ error: 'customer and match required' })
+  const raw = req.body
+  const [customer, match] = await Promise.all([
+    resolveProfile(raw.customer),
+    resolveProfile(raw.match),
+  ])
+  if (!customer || !match)
+    return res.status(400).json({ error: 'Could not resolve profiles' })
 
   console.log(`\n[generate-intro] ${customer.firstName} ↔ ${match.firstName}`)
 
@@ -333,14 +354,18 @@ Breakdown: ${breakdownSummary(breakdown)}`
 })
 
 router.post('/send-match', async (req, res) => {
-  const { customer, match } = req.body
-  if (!customer || !match) return res.status(400).json({ error: 'customer and match required' })
+  const raw = req.body
+  const [customer, match] = await Promise.all([
+    resolveProfile(raw.customer),
+    resolveProfile(raw.match),
+  ])
+  if (!customer || !match)
+    return res.status(400).json({ error: 'Could not resolve profiles' })
 
-  console.log('\n============================================================')
+
   console.log('[send-match] NEW REQUEST')
   console.log(`             Customer : ${customer.firstName} ${customer.lastName} <${customer.email}>`)
   console.log(`             Match    : ${match.firstName} ${match.lastName} <${match.email}>`)
-  console.log('============================================================')
 
   // 1. Score
   const { total, breakdown } = computeMatchScore(customer, match)
