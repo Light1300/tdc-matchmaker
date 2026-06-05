@@ -1,8 +1,9 @@
 import dotenv from 'dotenv'
 import { Router } from 'express'
 import Groq from 'groq-sdk'
-import nodemailer from 'nodemailer'
+import { Resend } from 'resend'
 dotenv.config()
+
 
 const router = Router()
 
@@ -16,37 +17,20 @@ const getGroq = () => {
   return _groq
 }
 
-const transporter = nodemailer.createTransport(
-  process.env.EMAIL_HOST
-    ? {
-        host: process.env.EMAIL_HOST,
-        port: Number(process.env.EMAIL_PORT) || 587,
-        secure: process.env.EMAIL_SECURE === 'true',
-        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-      }
-    : {
-        service: 'gmail',
-        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-      }
-)
 
 
-
-// Verify SMTP connection
-transporter.verify((err) => {
-  console.log('\n========== SMTP STATUS ==========')
-  console.log(`Host    : ${process.env.EMAIL_HOST || 'gmail (service)'}`)
-  console.log(`Port    : ${process.env.EMAIL_PORT || '(gmail default)'}`)
-  console.log(`User    : ${process.env.EMAIL_USER || '(not set)'}`)
-  console.log(`Pass    : ${process.env.EMAIL_PASS ? ' present' : ' MISSING'}`)
-  if (err) {
-    console.error('Status  :  SMTP CONNECTION FAILED')
-    console.error('Reason  :', err.message)
-  } else {
-    console.log('Status  : SMTP READY — emails will send')
+const toEmail = process.env.DEMO_EMAIL || customer.email  // override for demo
+let _resend
+const getResend = () => {
+  if (!_resend) {
+    _resend = new Resend(process.env.RESEND_API_KEY)
+    console.log('[Resend] ✅ Client initialised')
   }
-  console.log('==================================\n')
-})
+  return _resend
+}
+console.log(`[Resend] API key present: ${!!process.env.RESEND_API_KEY}`)
+
+
 
 const kidsScore = (a, b) => {
   if (!a || !b) return 50
@@ -454,30 +438,33 @@ Write the email to ${match.firstName} now.`
   console.log(`             To #2 : ${match.email}`)
 
   try {
-    const [info1, info2] = await Promise.all([
-      transporter.sendMail({
-        from: `"The Date Crew" <${process.env.EMAIL_USER}>`,
-        to: customer.email,
-        subject,
-        text: customerEmailBody,
-        html: customerHTML,
-      }),
-      transporter.sendMail({
-        from: `"The Date Crew" <${process.env.EMAIL_USER}>`,
-        to: match.email,
-        subject,
-        text: matchEmailBody,
-        html: matchHTML,
-      }),
-    ])
+    const resend = getResend()
+const [res1, res2] = await Promise.all([
+  resend.emails.send({
+    from: 'The Date Crew <onboarding@resend.dev>',
+    to: DEV_EMAIL,
+    subject,
+    text: customerEmailBody,
+    html: customerHTML,
+  }),
+  resend.emails.send({
+    from: 'The Date Crew <onboarding@resend.dev>',
+    to: DEV_EMAIL,
+    subject,
+    text: matchEmailBody,
+    html: matchHTML,
+  }),
+])
 
-    console.log(`[send-match] ✅ BOTH EMAILS SENT`)
-    console.log(`             msgId #1 : ${info1.messageId}`)
-    console.log(`             msgId #2 : ${info2.messageId}`)
-    console.log(`             Score    : ${total}/100 — ${label}`)
-    console.log('============================================================\n')
+if (res1.error || res2.error) {
+  throw new Error(res1.error?.message || res2.error?.message)
+}
 
-    res.json({
+console.log(`[send-match] ✅ BOTH EMAILS SENT`)
+console.log(`             id #1 : ${res1.data?.id}`)
+console.log(`             id #2 : ${res2.data?.id}`)    
+
+  res.json({
       sent: true,
       score: total,
       label,
@@ -488,7 +475,7 @@ Write the email to ${match.firstName} now.`
 
 
   } catch (err) {
-    console.error(`[send-match] NODEMAILER FAILED :::`)
+    console.error(`[send-match] Resend   FAILED :::`)
     console.error(`             Error   : ${err.message}`)
     console.error(`             Hint    : Check EMAIL_USER / EMAIL_PASS in .env`)
     console.error(`             Hint    : Gmail needs an App Password, not your login password`)
