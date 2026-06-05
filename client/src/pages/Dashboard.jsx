@@ -142,7 +142,7 @@ export default function Dashboard() {
                       style={{ borderBottom: i < customers.length - 1 ? '1px solid #f9fafb' : 'none', cursor: 'pointer', transition: 'background 0.15s' }}
                       onMouseEnter={e => e.currentTarget.style.background = '#fafafa'}
                       onMouseLeave={e => e.currentTarget.style.background = '#fff'}
-                      onClick={() => navigate(`/profile/${p._id || p.id}`)}>
+                      onClick={() => navigate(`/profile/${p.id}`)}>
                       <td style={{ padding: '14px 20px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                           <img src={p.profilePhoto} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover' }} />

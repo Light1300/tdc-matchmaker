@@ -1,16 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getMatches, getScoreLabel } from '../lib/matchingEngine'
-// import { , scoreMatch } from '../lib/api'
-import { sendMatch, scoreMatch ,generateIntro  } from '../lib/api'
+import { sendMatch, fetchProfiles } from '../lib/api'
 import { generateReason } from '../lib/reasoningEngine'
 
-
-import profilesRaw from '../data/profiles.json'
-const profiles = Array.isArray(profilesRaw) ? profilesRaw : Object.values(profilesRaw)
-
 const fmt = (n) => n ? `₹${(n/100000).toFixed(1)}L/yr` : 'N/A'
-const fmtHeight = (cm) => { const ft = Math.floor(cm/30.48); const inch = Math.round((cm/30.48 - ft)*12); return `${ft}'${inch}" (${cm} cm)` }
+const fmtHeight = (cm) => {
+  const ft = Math.floor(cm/30.48)
+  const inch = Math.round((cm/30.48 - ft)*12)
+  return `${ft}'${inch}" (${cm} cm)`
+}
 
 const InfoRow = ({ label, value }) => (
   <div style={{ display: 'flex', padding: '10px 0', borderBottom: '1px solid #f9fafb' }}>
@@ -27,70 +26,119 @@ const Section = ({ title, children }) => (
 )
 
 export default function ProfileView() {
-  const { id } = useParams()
+  const { id }   = useParams()   // always TDC001 format
   const navigate = useNavigate()
-  const customer = profiles.find(p => p.id === id)
-  const [matches, setMatches] = useState([])
-  const [note, setNote] = useState('')
-  const [savedNote, setSavedNote] = useState('')
-  const [sentMatches, setSentMatches] = useState([])
+
+  const [customer,        setCustomer]        = useState(null)
+  const [matches,         setMatches]         = useState([])
+  const [loading,         setLoading]         = useState(true)
+  const [error,           setError]           = useState(null)
+  const [note,            setNote]            = useState('')
+  const [sentMatches,     setSentMatches]     = useState([])
   const [generatingIntro, setGeneratingIntro] = useState(null)
-  const [introText, setIntroText] = useState({})
-  const [aiReasons, setAiReasons] = useState({})
-  const [showTop, setShowTop] = useState(10)
+  const [introText,       setIntroText]       = useState({})
+  const [aiReasons,       setAiReasons]       = useState({})
+  const [showTop,         setShowTop]         = useState(10)
 
   useEffect(() => {
-    if (!customer) return
-    const computed = getMatches(customer, profiles)
-    setMatches(computed)
-    const savedNote = localStorage.getItem(`note_${id}`) || ''
-    setSavedNote(savedNote)
-    setNote(savedNote)
-    const sent = JSON.parse(localStorage.getItem(`sent_${id}`) || '[]')
-    setSentMatches(sent)
+    setLoading(true)
+    setError(null)
+    setMatches([])
+    setAiReasons({})
 
-    const reasons = {}
-computed.forEach(m => {
-  if (m.breakdown) {
-    reasons[m.id] = generateReason(customer.firstName, m.firstName, m.breakdown)
-  }
-})
-setAiReasons(reasons)
+    fetchProfiles()
+      .then(profiles => {
+        // Find by custom id field (TDC001), not MongoDB _id
+        const cust = profiles.find(p => p.id === id)
+
+        if (!cust) {
+          setError(`Profile "${id}" not found in database`)
+          setLoading(false)
+          return
+        }
+
+        setCustomer(cust)
+
+        // Run matching engine against full pool
+        const computed = getMatches(cust, profiles)
+        setMatches(computed)
+
+        // Deterministic reasons — zero Groq calls
+        const reasons = {}
+        computed.forEach(m => {
+          if (m.breakdown) {
+            reasons[m.id] = generateReason(cust.firstName, m.firstName, m.breakdown)
+          }
+        })
+        setAiReasons(reasons)
+
+        // Restore persisted state
+        setNote(localStorage.getItem(`note_${id}`) || '')
+        setSentMatches(JSON.parse(localStorage.getItem(`sent_${id}`) || '[]'))
+
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error('[ProfileView] fetch error:', err)
+        setError(err.message)
+        setLoading(false)
+      })
   }, [id])
-
-  if (!customer) return <div style={{ padding: 40, textAlign: 'center' }}>Profile not found.</div>
 
   const saveNote = () => {
     localStorage.setItem(`note_${id}`, note)
-    setSavedNote(note)
     alert('Note saved!')
   }
 
   const handleSendMatch = async (match) => {
     setGeneratingIntro(match.id)
     try {
-      // NEW — what it should be
       const result = await sendMatch(customer, match)
-       setIntroText(prev => ({
-      ...prev,
-      [match.id]: result.customerEmail?.body || 'Email sent successfully.'
-    }))
 
-    if (result.sent) {
-      console.log(`✅ Emails sent to ${result.customerEmail?.to} and ${result.matchEmail?.to}`)
-    } else {
-      console.warn('⚠️ Email delivery failed but content was generated:', result.detail)
+      setIntroText(prev => ({
+        ...prev,
+        [match.id]: result.customerEmail?.body || 'Email sent successfully.',
+      }))
+
+      const newSent = [...sentMatches, match.id]
+      setSentMatches(newSent)
+      localStorage.setItem(`sent_${id}`, JSON.stringify(newSent))
+
+      if (result.sent) {
+        console.log(`✅ Emails sent to ${result.customerEmail?.to} and ${result.matchEmail?.to}`)
+      } else {
+        console.warn('⚠️ Delivery failed, content generated:', result.detail)
+      }
+    } catch (err) {
+      setIntroText(prev => ({
+        ...prev,
+        [match.id]: 'Could not generate or send email. Please try again.',
+      }))
+      console.error('sendMatch error:', err)
     }
-
-  } catch (err) {
-    setIntroText(prev => ({
-      ...prev,
-      [match.id]: 'Could not generate or send email. Please try again.'
-    }))
-    console.error('sendMatch error:', err)
+    setGeneratingIntro(null)
   }
-  setGeneratingIntro(null)
-}
+
+  // ── States ──────────────────────────────────────────────────────────────────
+  if (loading) return (
+    <div style={{ padding: 80, textAlign: 'center', fontFamily: 'system-ui', color: '#9ca3af' }}>
+      <div style={{ fontSize: 32, marginBottom: 12 }}>💍</div>
+      Loading profile...
+    </div>
+  )
+
+  if (error || !customer) return (
+    <div style={{ padding: 80, textAlign: 'center', fontFamily: 'system-ui' }}>
+      <div style={{ fontSize: 32, marginBottom: 12 }}>⚠️</div>
+      <div style={{ color: '#dc2626', fontSize: 15 }}>{error || 'Profile not found.'}</div>
+      <button
+        onClick={() => navigate('/dashboard')}
+        style={{ marginTop: 20, padding: '8px 20px', background: '#ec4899', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13 }}>
+        ← Back to Dashboard
+      </button>
+    </div>
+  )
+
   const visibleMatches = matches.slice(0, showTop)
 
   return (
@@ -119,12 +167,12 @@ setAiReasons(reasons)
           </div>
 
           <Section title="Personal Details">
-            <InfoRow label="Date of Birth" value={customer.dateOfBirth} />
-            <InfoRow label="Age" value={`${customer.age} years`} />
-            <InfoRow label="Gender" value={customer.gender} />
-            <InfoRow label="Height" value={fmtHeight(customer.height)} />
-            <InfoRow label="Country" value={customer.country} />
-            <InfoRow label="City" value={customer.city} />
+            <InfoRow label="Date of Birth"  value={customer.dateOfBirth} />
+            <InfoRow label="Age"            value={`${customer.age} years`} />
+            <InfoRow label="Gender"         value={customer.gender} />
+            <InfoRow label="Height"         value={fmtHeight(customer.height)} />
+            <InfoRow label="Country"        value={customer.country} />
+            <InfoRow label="City"           value={customer.city} />
           </Section>
 
           <Section title="Contact">
@@ -133,35 +181,34 @@ setAiReasons(reasons)
           </Section>
 
           <Section title="Professional">
-            <InfoRow label="Company" value={customer.company} />
-            <InfoRow label="Designation" value={customer.designation} />
+            <InfoRow label="Company"       value={customer.company} />
+            <InfoRow label="Designation"   value={customer.designation} />
             <InfoRow label="Annual Income" value={fmt(customer.income)} />
-            <InfoRow label="College" value={customer.college} />
-            <InfoRow label="Degree" value={customer.degree} />
+            <InfoRow label="College"       value={customer.college} />
+            <InfoRow label="Degree"        value={customer.degree} />
           </Section>
 
           <Section title="Family & Values">
-            <InfoRow label="Religion" value={customer.religion} />
-            <InfoRow label="Caste" value={customer.caste} />
+            <InfoRow label="Religion"       value={customer.religion} />
+            <InfoRow label="Caste"          value={customer.caste} />
             <InfoRow label="Marital Status" value={customer.maritalStatus} />
-            <InfoRow label="Siblings" value={customer.siblings} />
-            <InfoRow label="Family Type" value={customer.familyType} />
-            <InfoRow label="Family Values" value={customer.familyValues} />
-            <InfoRow label="Manglik" value={customer.manglik} />
+            <InfoRow label="Siblings"       value={customer.siblings} />
+            <InfoRow label="Family Type"    value={customer.familyType} />
+            <InfoRow label="Family Values"  value={customer.familyValues} />
+            <InfoRow label="Manglik"        value={customer.manglik} />
           </Section>
 
           <Section title="Lifestyle & Preferences">
-            <InfoRow label="Languages" value={customer.languages?.join(', ')} />
-            <InfoRow label="Hobbies" value={customer.hobbies?.join(', ')} />
-            <InfoRow label="Diet" value={customer.dietaryPreference} />
-            <InfoRow label="Drinking" value={customer.drinkingHabits} />
-            <InfoRow label="Smoking" value={customer.smokingHabits} />
-            <InfoRow label="Wants Kids" value={customer.wantsKids} />
+            <InfoRow label="Languages"        value={customer.languages?.join(', ')} />
+            <InfoRow label="Hobbies"          value={customer.hobbies?.join(', ')} />
+            <InfoRow label="Diet"             value={customer.dietaryPreference} />
+            <InfoRow label="Drinking"         value={customer.drinkingHabits} />
+            <InfoRow label="Smoking"          value={customer.smokingHabits} />
+            <InfoRow label="Wants Kids"       value={customer.wantsKids} />
             <InfoRow label="Open to Relocate" value={customer.openToRelocate} />
-            <InfoRow label="Open to Pets" value={customer.openToPets} />
+            <InfoRow label="Open to Pets"     value={customer.openToPets} />
           </Section>
 
-          {/* Notes */}
           <Section title="📝 Matchmaker Notes">
             <textarea
               value={note}
@@ -169,7 +216,9 @@ setAiReasons(reasons)
               placeholder="Add notes about this client..."
               style={{ width: '100%', minHeight: 100, padding: 12, border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 13, fontFamily: 'system-ui, sans-serif', resize: 'vertical', boxSizing: 'border-box', outline: 'none' }}
             />
-            <button onClick={saveNote} style={{ marginTop: 10, padding: '8px 20px', background: '#ec4899', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>Save Note</button>
+            <button onClick={saveNote} style={{ marginTop: 10, padding: '8px 20px', background: '#ec4899', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500 }}>
+              Save Note
+            </button>
           </Section>
         </div>
 
@@ -181,20 +230,24 @@ setAiReasons(reasons)
               <span style={{ fontSize: 13, color: '#9ca3af' }}>{matches.length} candidates scored</span>
             </div>
             <p style={{ margin: 0, fontSize: 13, color: '#9ca3af' }}>
-              {customer.gender === 'Male' ? 'Scored on age, height, income, family views & relocation alignment' : 'Scored on profession fit, income stability, family values & lifestyle compatibility'}
+              {customer.gender === 'Male'
+                ? 'Scored on age, height, income, family views & relocation alignment'
+                : 'Scored on profession fit, income stability, family values & lifestyle compatibility'}
             </p>
           </div>
 
           {visibleMatches.map((match) => {
-            const sl = getScoreLabel(match.matchScore)
-            const isSent = sentMatches.includes(match.id)
+            const sl        = getScoreLabel(match.matchScore)
+            const isSent    = sentMatches.includes(match.id)
             const isLoading = generatingIntro === match.id
-            const intro = introText[match.id]
+            const intro     = introText[match.id]
 
             return (
-              <div key={match.id} style={{ background: '#fff', borderRadius: 16, border: '1px solid #f3f4f6', padding: '20px 24px', marginBottom: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', transition: 'box-shadow 0.2s' }}
+              <div key={match.id}
+                style={{ background: '#fff', borderRadius: 16, border: '1px solid #f3f4f6', padding: '20px 24px', marginBottom: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.04)', transition: 'box-shadow 0.2s' }}
                 onMouseEnter={e => e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.08)'}
                 onMouseLeave={e => e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.04)'}>
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div style={{ display: 'flex', gap: 14, alignItems: 'center', flex: 1 }}>
                     <img src={match.profilePhoto} alt="" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
@@ -217,10 +270,10 @@ setAiReasons(reasons)
                   </div>
                 </div>
 
-                {/* AI Reason */}
+                {/* Deterministic reason */}
                 {aiReasons[match.id] && (
                   <div style={{ marginTop: 12, padding: '10px 14px', background: '#f8fafc', borderRadius: 8, borderLeft: '3px solid #6366f1', fontSize: 13, color: '#374151', fontStyle: 'italic' }}>
-                    🤖 {aiReasons[match.id]}
+                    💡 {aiReasons[match.id]}
                   </div>
                 )}
 
@@ -230,8 +283,7 @@ setAiReasons(reasons)
                     <button
                       onClick={() => handleSendMatch(match)}
                       disabled={isLoading}
-                      style={{ padding: '8px 20px', background: isLoading ? '#f9a8d4' : '#ec4899', color: '#fff', border: 'none', borderRadius: 8, cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600 }}
-                    >
+                      style={{ padding: '8px 20px', background: isLoading ? '#f9a8d4' : '#ec4899', color: '#fff', border: 'none', borderRadius: 8, cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600 }}>
                       {isLoading ? '✨ Generating...' : '💌 Send Match'}
                     </button>
                   ) : (
@@ -251,7 +303,9 @@ setAiReasons(reasons)
           })}
 
           {showTop < matches.length && (
-            <button onClick={() => setShowTop(showTop + 10)} style={{ width: '100%', padding: '12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, cursor: 'pointer', fontSize: 14, color: '#6b7280', marginTop: 8 }}>
+            <button
+              onClick={() => setShowTop(showTop + 10)}
+              style={{ width: '100%', padding: '12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, cursor: 'pointer', fontSize: 14, color: '#6b7280', marginTop: 8 }}>
               Load more matches ({matches.length - showTop} remaining)
             </button>
           )}

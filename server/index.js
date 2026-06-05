@@ -31,7 +31,7 @@ app.use(cors({
     
     callback(new Error(`CORS blocked: ${origin}`))
   },
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'PATCH'],
   allowedHeaders: ['Content-Type'],
 }))
 app.use(express.json({ limit: '1mb' }))
