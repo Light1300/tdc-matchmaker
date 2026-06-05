@@ -112,7 +112,7 @@ export default function Dashboard() {
         {/* Error state */}
         {error && (
           <div style={{ padding: 20, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, color: '#dc2626', fontSize: 14, marginBottom: 20 }}>
-            Failed to load profiles: {error}
+            ❌ Failed to load profiles: {error}
           </div>
         )}
 
@@ -135,7 +135,46 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                              </tbody>
+                {customers.map((p, i) => {
+                  const sc = STATUS_COLORS[p.status] || STATUS_COLORS['Active']
+                  return (
+                    <tr key={p._id || p.id}
+                      style={{ borderBottom: i < customers.length - 1 ? '1px solid #f9fafb' : 'none', cursor: 'pointer', transition: 'background 0.15s' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#fafafa'}
+                      onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                      onClick={() => navigate(`/profile/${p._id || p.id}`)}>
+                      <td style={{ padding: '14px 20px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <img src={p.profilePhoto} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover' }} />
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 14, color: '#111827' }}>{p.firstName} {p.lastName}</div>
+                            <div style={{ fontSize: 12, color: '#9ca3af' }}>{p.id} · {p.gender}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '14px 20px', fontSize: 14, color: '#374151' }}>{p.age} yrs · {p.city}</td>
+                      <td style={{ padding: '14px 20px', fontSize: 13, color: '#374151' }}>
+                        <div>{p.designation}</div>
+                        <div style={{ fontSize: 12, color: '#9ca3af' }}>{p.company}</div>
+                      </td>
+                      <td style={{ padding: '14px 20px', fontSize: 13, color: '#374151' }}>{p.maritalStatus}</td>
+                      <td style={{ padding: '14px 20px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: sc.bg, color: sc.text, padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: sc.dot, display: 'inline-block' }} />
+                          {p.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '14px 20px' }}>
+                        <button
+                          onClick={e => { e.stopPropagation(); navigate(`/profile/${p.id}`) }}
+                          style={{ padding: '6px 14px', background: '#fdf2f8', color: '#ec4899', border: '1px solid #fce7f3', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                          View →
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
             </table>
             {customers.length === 0 && (
               <div style={{ padding: 48, textAlign: 'center', color: '#9ca3af' }}>No profiles match your search.</div>
