@@ -16,7 +16,21 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', /\.vercel\.app$/],
+ origin: (origin, callback) => {
+    if (!origin) return callback(null, true)
+    
+    const allowed = [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'https://tdc-matchmaker.vercel.app', 
+    ]
+    
+    if (allowed.includes(origin) || origin.endsWith('.vercel.app')) {
+      return callback(null, true)
+    }
+    
+    callback(new Error(`CORS blocked: ${origin}`))
+  },
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }))
